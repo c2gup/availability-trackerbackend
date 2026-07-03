@@ -16,7 +16,7 @@ const PORT = process.env.PORT || 5001;
 const allowedOrigins = [
   "https://availabilitytrackerfrontend.vercel.app",
   "http://localhost:3000",
-  "http://localhost:5173",
+  "http://localhost:5174",
 ];
 
 app.use(
