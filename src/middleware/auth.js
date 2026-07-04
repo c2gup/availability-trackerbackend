@@ -64,6 +64,100 @@ function roleFromDecoded(decoded) {
   return decoded.isAdmin ? "ADMIN" : "MENTOR";
 }
 
+function nameFromDecoded(decoded, email) {
+  const parts = [
+    decoded.name,
+    decoded.fullName,
+    decoded.displayName,
+    decoded.firstName && decoded.lastName
+      ? `${decoded.firstName} ${decoded.lastName}`
+      : decoded.firstName || decoded.lastName,
+  ];
+  for (const part of parts) {
+    const trimmed = typeof part === "string" ? part.trim() : "";
+    if (trimmed && !trimmed.includes("@")) return trimmed;
+  }
+  const local = email?.split("@")[0]?.split(/[._-]+/).filter(Boolean).join(" ");
+  if (local) return local.charAt(0).toUpperCase() + local.slice(1);
+  return "SSO User";
+}
+
+function isStaleSsoName(name, email) {
+  if (!name?.trim()) return true;
+  const normalized = name.trim().toLowerCase();
+  if (normalized === "sso user") return true;
+  const emailLower = (email || "").trim().toLowerCase();
+  if (normalized === emailLower) return true;
+  const local = emailLower.split("@")[0] || "";
+  if (local && normalized === local) return true;
+  return false;
+}
+
+function hasExplicitJwtName(decoded) {
+  return [decoded.name, decoded.fullName, decoded.displayName, decoded.firstName, decoded.lastName].some(
+    (part) => typeof part === "string" && part.trim() && !part.includes("@")
+  );
+}
+
+async function upsertUserFromToken(decoded, email, role, idFromToken, token) {
+  const tokenName = nameFromDecoded(decoded, email);
+  let user = await prisma.user.findUnique({ where: { email } });
+
+  if (user) {
+    const data = {};
+    if (user.role !== role) data.role = role;
+    const shouldUpdateName =
+      hasExplicitJwtName(decoded) &&
+      !isStaleSsoName(tokenName, email) &&
+      (isStaleSsoName(user.name, email) || user.name.trim() !== tokenName.trim());
+    if (shouldUpdateName) data.name = tokenName;
+    console.log("[SSO] tracker auth upsert (existing user)", {
+      email,
+      token,
+      jwtNameFields: {
+        name: decoded.name,
+        fullName: decoded.fullName,
+        displayName: decoded.displayName,
+        firstName: decoded.firstName,
+        lastName: decoded.lastName,
+      },
+      resolvedName: tokenName,
+      previousName: user.name,
+      storedName: data.name ?? user.name,
+      isStalePreviousName: isStaleSsoName(user.name, email),
+      shouldUpdateName,
+      updatedFields: Object.keys(data),
+    });
+    if (Object.keys(data).length > 0) {
+      user = await prisma.user.update({ where: { id: user.id }, data });
+    }
+    return user;
+  }
+
+  console.log("[SSO] tracker auth upsert (new user)", {
+    email,
+    token,
+    jwtNameFields: {
+      name: decoded.name,
+      fullName: decoded.fullName,
+      displayName: decoded.displayName,
+      firstName: decoded.firstName,
+      lastName: decoded.lastName,
+    },
+    resolvedName: tokenName,
+  });
+
+  return prisma.user.create({
+    data: {
+      id: idFromToken,
+      email,
+      name: tokenName,
+      role,
+      password: "SSO_USER_NO_PASSWORD",
+    },
+  });
+}
+
 export async function authenticate(req, res, next) {
   const authHeader = req.headers.authorization;
   const token = authHeader?.startsWith("Bearer ")
@@ -92,28 +186,7 @@ export async function authenticate(req, res, next) {
     return res.status(401).json({ error: "Invalid token: missing email" });
   }
 
-  let user = await prisma.user.findUnique({
-    where: { email },
-  });
-
-  if (user) {
-    if (user.role !== role) {
-      user = await prisma.user.update({
-        where: { id: user.id },
-        data: { role },
-      });
-    }
-  } else {
-    user = await prisma.user.create({
-      data: {
-        id: idFromToken,
-        email,
-        name: decoded.name || decoded.email || "SSO User",
-        role,
-        password: "SSO_USER_NO_PASSWORD",
-      },
-    });
-  }
+  let user = await upsertUserFromToken(decoded, email, role, idFromToken, token);
 
   req.userId = user.id;
   req.userRole = user.role;
@@ -146,34 +219,11 @@ export async function optionalAuth(req, res, next) {
     const email = (decoded.email || "").trim().toLowerCase();
     if (!email) return next();
     const role = roleFromDecoded(decoded);
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (user && user.role === role) {
-      req.userId = user.id;
-      req.userRole = user.role;
-      req.userEmail = user.email;
-    } else if (!user) {
-      const idFromToken = decoded.userId || decoded.id;
-      const newUser = await prisma.user.create({
-        data: {
-          id: idFromToken,
-          email,
-          name: decoded.name || decoded.email || "SSO User",
-          role,
-          password: "SSO_USER_NO_PASSWORD",
-        },
-      });
-      req.userId = newUser.id;
-      req.userRole = newUser.role;
-      req.userEmail = newUser.email;
-    } else {
-      const updated = await prisma.user.update({
-        where: { id: user.id },
-        data: { role },
-      });
-      req.userId = updated.id;
-      req.userRole = updated.role;
-      req.userEmail = updated.email;
-    }
+    const idFromToken = decoded.userId || decoded.id;
+    const user = await upsertUserFromToken(decoded, email, role, idFromToken, token);
+    req.userId = user.id;
+    req.userRole = user.role;
+    req.userEmail = user.email;
   } catch {
     // ignore
   }

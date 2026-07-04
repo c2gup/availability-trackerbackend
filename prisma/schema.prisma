@@ -13,6 +13,12 @@ enum Role {
   ADMIN
 }
 
+enum WeekFillStatus {
+  MATERIALIZED
+  CLEARED
+  MANUAL
+}
+
 model User {
   id                 String   @id @default(uuid())
   name               String
@@ -23,9 +29,15 @@ model User {
   googleRefreshToken String?  @map("google_refresh_token")
   createdAt          DateTime @default(now()) @map("created_at")
 
-  availabilityAsUser   Availability[] @relation("UserAvailability")
-  availabilityAsMentor Availability[] @relation("MentorAvailability")
-  meetingsAsAdmin      Meeting[]      @relation("AdminMeetings")
+  availabilityAsUser      Availability[]          @relation("UserAvailability")
+  availabilityAsMentor    Availability[]          @relation("MentorAvailability")
+  availabilityTemplate    AvailabilityTemplate?    @relation("UserTemplate")
+  mentorTemplate          AvailabilityTemplate?    @relation("MentorTemplate")
+  availabilityExceptions  AvailabilityException[]  @relation("UserExceptions")
+  mentorExceptions        AvailabilityException[]  @relation("MentorExceptions")
+  availabilityWeekMeta    AvailabilityWeekMeta[]   @relation("UserWeekMeta")
+  mentorWeekMeta          AvailabilityWeekMeta[]  @relation("MentorWeekMeta")
+  meetingsAsAdmin         Meeting[]               @relation("AdminMeetings")
 }
 
 model Availability {
@@ -51,6 +63,57 @@ model Availability {
   @@index([mentorId, date], map: "availabilities_mentor_id_date_idx")
   @@index([role, date], map: "availabilities_role_date_idx")
   @@map("availabilities")
+}
+
+model AvailabilityTemplate {
+  id        String   @id @default(uuid())
+  userId    String?  @unique @map("user_id")
+  mentorId  String?  @unique @map("mentor_id")
+  role      Role
+  slots     Json     @default("[]")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  user   User? @relation("UserTemplate", fields: [userId], references: [id], onDelete: Cascade)
+  mentor User? @relation("MentorTemplate", fields: [mentorId], references: [id], onDelete: Cascade)
+
+  @@map("availability_templates")
+}
+
+model AvailabilityException {
+  id        String   @id @default(uuid())
+  userId    String?  @map("user_id")
+  mentorId  String?  @map("mentor_id")
+  role      Role
+  weekStart DateTime @map("week_start") @db.Date
+  dayOfWeek Int      @map("day_of_week")
+  hour      Int
+  enabled   Boolean
+  createdAt DateTime @default(now()) @map("created_at")
+
+  user   User? @relation("UserExceptions", fields: [userId], references: [id], onDelete: Cascade)
+  mentor User? @relation("MentorExceptions", fields: [mentorId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStart, dayOfWeek, hour], map: "availability_exceptions_user_week_slot_key")
+  @@unique([mentorId, weekStart, dayOfWeek, hour], map: "availability_exceptions_mentor_week_slot_key")
+  @@map("availability_exceptions")
+}
+
+model AvailabilityWeekMeta {
+  id        String         @id @default(uuid())
+  userId    String?        @map("user_id")
+  mentorId  String?        @map("mentor_id")
+  role      Role
+  weekStart DateTime       @map("week_start") @db.Date
+  status    WeekFillStatus
+  updatedAt DateTime       @updatedAt @map("updated_at")
+
+  user   User? @relation("UserWeekMeta", fields: [userId], references: [id], onDelete: Cascade)
+  mentor User? @relation("MentorWeekMeta", fields: [mentorId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, weekStart], map: "availability_week_meta_user_week_key")
+  @@unique([mentorId, weekStart], map: "availability_week_meta_mentor_week_key")
+  @@map("availability_week_meta")
 }
 
 model Meeting {

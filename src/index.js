@@ -8,6 +8,7 @@ import { availabilityRoutes } from "./routes/availability.js";
 import { meetingRoutes } from "./routes/meeting.js";
 import { adminRoutes } from "./routes/admin.js";
 import { googleRouter } from "./routes/google.routes.js";
+import { integrationRoutes } from "./routes/integration.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
@@ -16,7 +17,7 @@ const PORT = process.env.PORT || 5001;
 const allowedOrigins = [
   "https://availabilitytrackerfrontend.vercel.app",
   "http://localhost:3000",
-  "http://localhost:5173",
+  "http://localhost:5174",
 ];
 
 app.use(
@@ -39,6 +40,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/availability", availabilityRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/integration", integrationRoutes);
 app.use("/api/google", googleRouter);
 
 app.get("/health", (_, res) => res.json({ ok: true }));
