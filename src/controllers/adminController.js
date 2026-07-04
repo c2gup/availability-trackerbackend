@@ -1,6 +1,8 @@
 import bcrypt from "bcryptjs";
 import { DateTime } from "luxon";
 import { prisma } from "../lib/prisma.js";
+import { getWeekStart } from "../utils/time.js";
+import { loadWeeklyAvailability, isAvailableBetween } from "../services/availabilityWeek.js";
 import { v4 as uuidv4 } from "uuid";
 import { isPastTime } from "../utils/time.js";
 import { createCalendarEventWithMeet } from "../services/googleCalendar.js";
@@ -72,56 +74,25 @@ export async function getAvailabilityForUser(req, res, next) {
   try {
     const { userId } = req.params;
     const { weekStart } = req.query;
+
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const owner =
+      user.role === "MENTOR"
+        ? { userId: null, mentorId: userId, role: "MENTOR" }
+        : { userId, mentorId: null, role: "USER" };
+
     const weekStartDate = weekStart ? new Date(weekStart) : getWeekStart(new Date());
     weekStartDate.setUTCHours(0, 0, 0, 0);
 
-    const dates = [];
-    for (let i = 0; i < 7; i++) {
-      const d = new Date(weekStartDate);
-      d.setUTCDate(weekStartDate.getUTCDate() + i);
-      dates.push(d.toISOString().slice(0, 10));
-    }
-
-    const slots = await prisma.availability.findMany({
-      where: {
-        OR: [
-          { userId, role: "USER" },
-          { mentorId: userId, role: "MENTOR" },
-        ],
-        date: { gte: weekStartDate, lt: new Date(weekStartDate.getTime() + 7 * 24 * 60 * 60 * 1000) },
-      },
-      orderBy: [{ date: "asc" }, { startTime: "asc" }],
-    });
-
-    const byDate = {};
-    dates.forEach((d) => (byDate[d] = []));
-    slots.forEach((s) => {
-      const d = s.date.toISOString().slice(0, 10);
-      if (!byDate[d]) byDate[d] = [];
-      byDate[d].push({
-        id: s.id,
-        startTime: s.startTime.toISOString(),
-        endTime: s.endTime.toISOString(),
-      });
-    });
-
-    res.json({
-      weekStart: weekStartDate.toISOString().slice(0, 10),
-      dates,
-      availability: byDate,
-    });
+    const result = await loadWeeklyAvailability(owner, weekStartDate);
+    res.json(result);
   } catch (e) {
     next(e);
   }
-}
-
-function getWeekStart(date) {
-  const d = new Date(date);
-  const day = d.getUTCDay();
-  const diff = d.getUTCDate() - day + (day === 0 ? -6 : 1);
-  d.setUTCDate(diff);
-  d.setUTCHours(0, 0, 0, 0);
-  return d;
 }
 
 function rangesOverlap(aStart, aEnd, bStart, bEnd) {
@@ -135,24 +106,19 @@ export async function getOverlappingSlots(req, res, next) {
     if (!startTime || !endTime) {
       return res.status(400).json({ error: "startTime and endTime required" });
     }
-    const start = new Date(startTime);
-    const end = new Date(endTime);
 
-    const slots = await prisma.availability.findMany({
-      where: {
-        OR: [
-          { userId, role: "USER" },
-          { mentorId: userId, role: "MENTOR" },
-        ],
-      },
-      orderBy: [{ date: "asc" }, { startTime: "asc" }],
-    });
+    const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
 
-    const overlapping = slots.filter((s) =>
-      rangesOverlap(start, end, s.startTime, s.endTime)
-    );
+    const owner =
+      user.role === "MENTOR"
+        ? { userId: null, mentorId: userId, role: "MENTOR" }
+        : { userId, mentorId: null, role: "USER" };
 
-    res.json(overlapping);
+    const available = await isAvailableBetween(owner, startTime, endTime);
+    res.json(available ? [{ userId, startTime, endTime }] : []);
   } catch (e) {
     next(e);
   }

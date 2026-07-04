@@ -1,0 +1,2 @@
+-- Prisma migration record (table already created manually)
+-- availability_exceptions
