@@ -29,15 +29,18 @@ model User {
   googleRefreshToken String?  @map("google_refresh_token")
   createdAt          DateTime @default(now()) @map("created_at")
 
-  availabilityAsUser      Availability[]          @relation("UserAvailability")
-  availabilityAsMentor    Availability[]          @relation("MentorAvailability")
-  availabilityTemplate    AvailabilityTemplate?    @relation("UserTemplate")
-  mentorTemplate          AvailabilityTemplate?    @relation("MentorTemplate")
-  availabilityExceptions  AvailabilityException[]  @relation("UserExceptions")
-  mentorExceptions        AvailabilityException[]  @relation("MentorExceptions")
-  availabilityWeekMeta    AvailabilityWeekMeta[]   @relation("UserWeekMeta")
-  mentorWeekMeta          AvailabilityWeekMeta[]  @relation("MentorWeekMeta")
-  meetingsAsAdmin         Meeting[]               @relation("AdminMeetings")
+  tags        String[]
+  description String?
+
+  availabilityAsUser     Availability[]          @relation("UserAvailability")
+  availabilityAsMentor   Availability[]          @relation("MentorAvailability")
+  availabilityTemplate   AvailabilityTemplate?   @relation("UserTemplate")
+  mentorTemplate         AvailabilityTemplate?   @relation("MentorTemplate")
+  availabilityExceptions AvailabilityException[] @relation("UserExceptions")
+  mentorExceptions       AvailabilityException[] @relation("MentorExceptions")
+  availabilityWeekMeta   AvailabilityWeekMeta[]  @relation("UserWeekMeta")
+  mentorWeekMeta         AvailabilityWeekMeta[]  @relation("MentorWeekMeta")
+  meetingsAsAdmin        Meeting[]               @relation("AdminMeetings")
 }
 
 model Availability {

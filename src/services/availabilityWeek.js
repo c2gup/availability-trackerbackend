@@ -12,15 +12,28 @@ import {
 /** @typedef {{ userId: string | null, mentorId: string | null, role: 'USER' | 'MENTOR' }} AvailabilityOwner */
 /** @typedef {{ dayOfWeek: number, hour: number }} PatternSlot */
 
-export function resolveOwner(callerId, callerRole, { targetUserId, targetMentorId } = {}) {
+export function resolveOwner(
+  callerId,
+  callerRole,
+  { targetUserId, targetMentorId } = {},
+) {
   const hasUserId = targetUserId != null && String(targetUserId).trim() !== "";
-  const hasMentorId = targetMentorId != null && String(targetMentorId).trim() !== "";
+  const hasMentorId =
+    targetMentorId != null && String(targetMentorId).trim() !== "";
 
   if (hasUserId && !hasMentorId) {
-    return { userId: String(targetUserId).trim(), mentorId: null, role: "USER" };
+    return {
+      userId: String(targetUserId).trim(),
+      mentorId: null,
+      role: "USER",
+    };
   }
   if (hasMentorId && !hasUserId) {
-    return { userId: null, mentorId: String(targetMentorId).trim(), role: "MENTOR" };
+    return {
+      userId: null,
+      mentorId: String(targetMentorId).trim(),
+      role: "MENTOR",
+    };
   }
   if (!hasUserId && !hasMentorId) {
     if (callerRole === "MENTOR") {
@@ -74,7 +87,9 @@ export function normalizePatternSlots(raw) {
     if (dayOfWeek < 0 || dayOfWeek > 6 || hour < 0 || hour > 23) continue;
     unique.set(slotKey(dayOfWeek, hour), { dayOfWeek, hour });
   }
-  return [...unique.values()].sort((a, b) => a.dayOfWeek - b.dayOfWeek || a.hour - b.hour);
+  return [...unique.values()].sort(
+    (a, b) => a.dayOfWeek - b.dayOfWeek || a.hour - b.hour,
+  );
 }
 
 function templateSet(slots) {
@@ -87,9 +102,13 @@ function templateHas(slots, dayOfWeek, hour) {
 
 async function findTemplateRow(owner) {
   if (owner.role === "MENTOR") {
-    return prisma.availabilityTemplate.findUnique({ where: { mentorId: owner.mentorId } });
+    return prisma.availabilityTemplate.findUnique({
+      where: { mentorId: owner.mentorId },
+    });
   }
-  return prisma.availabilityTemplate.findUnique({ where: { userId: owner.userId } });
+  return prisma.availabilityTemplate.findUnique({
+    where: { userId: owner.userId },
+  });
 }
 
 export async function getTemplateSlots(owner) {
@@ -126,7 +145,10 @@ async function getExceptionsForWeek(owner, weekStart) {
       ? { mentorId: owner.mentorId, weekStart: ws }
       : { userId: owner.userId, weekStart: ws };
 
-  return prisma.availabilityException.findMany({ where, orderBy: [{ dayOfWeek: "asc" }, { hour: "asc" }] });
+  return prisma.availabilityException.findMany({
+    where,
+    orderBy: [{ dayOfWeek: "asc" }, { hour: "asc" }],
+  });
 }
 
 function exceptionsMap(rows) {
@@ -163,11 +185,49 @@ function buildAvailabilityByDate(dateStrs, weekStart, template, excMap) {
   return byDate;
 }
 
+async function getMeetingsForWeek(owner, weekStart) {
+  const userId = owner.userId || owner.mentorId;
+  if (!userId) return [];
+
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { email: true }
+  });
+
+  if (!user) return [];
+
+  const ws = weekStartDate(weekStart);
+  const we = new Date(ws);
+  we.setUTCDate(we.getUTCDate() + 7);
+
+  return prisma.meeting.findMany({
+    where: {
+      participants: {
+        some: {
+          email: user.email
+        }
+      },
+      startTime: {
+        gte: ws,
+        lt: we
+      }
+    },
+    orderBy: {
+      startTime: "asc"
+    }
+  });
+}
+
+
 export async function loadWeeklyAvailability(owner, weekStartInput) {
-  const start = weekStartInput ? weekStartDate(weekStartInput) : getWeekStart(new Date());
+  const start = weekStartInput
+    ? weekStartDate(weekStartInput)
+    : getWeekStart(new Date());
+
   const dateStrs = weekDateStrings(start);
 
   let template = await getTemplateSlots(owner);
+
   if (template.length === 0) {
     template = await ensureTemplateFromLegacyAvailabilities(owner);
   }
@@ -175,10 +235,23 @@ export async function loadWeeklyAvailability(owner, weekStartInput) {
   const exceptions = await getExceptionsForWeek(owner, start);
   const excMap = exceptionsMap(exceptions);
 
+  // NEW
+  const meetings = await getMeetingsForWeek(owner, start);
+
   return {
     weekStart: dateStrs[0],
     dates: dateStrs,
-    availability: buildAvailabilityByDate(dateStrs, start, template, excMap),
+
+    availability: buildAvailabilityByDate(
+      dateStrs,
+      start,
+      template,
+      excMap,
+      meetings, // <-- pass meetings
+    ),
+
+    meetings, // <-- send to frontend also
+
     hasTemplate: template.length > 0,
     exceptionCount: exceptions.length,
   };
@@ -272,7 +345,12 @@ async function deleteException(owner, weekStart, dayOfWeek, hour) {
  * @param {{ dayOfWeek: number, hour: number, enabled: boolean }[]} changes
  * @param {'week' | 'template'} scope
  */
-export async function applyAvailabilityChanges(owner, weekStart, changes, scope) {
+export async function applyAvailabilityChanges(
+  owner,
+  weekStart,
+  changes,
+  scope,
+) {
   const template = await getTemplateSlots(owner);
 
   if (scope === "template") {
@@ -296,7 +374,11 @@ export async function applyAvailabilityChanges(owner, weekStart, changes, scope)
 }
 
 /** Save full grid pattern as template (every week). */
-export async function saveTemplateFromGrid(owner, enabledSlots, weekStart = null) {
+export async function saveTemplateFromGrid(
+  owner,
+  enabledSlots,
+  weekStart = null,
+) {
   const pattern = normalizePatternSlots(enabledSlots);
   await replaceTemplate(owner, pattern);
   if (weekStart) {

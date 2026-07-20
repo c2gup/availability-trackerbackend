@@ -24,7 +24,7 @@ app.use(
   cors({
     origin: allowedOrigins,
     credentials: true,
-  })
+  }),
 );
 app.use(express.json());
 app.use(cookieParser());
@@ -51,13 +51,24 @@ app.post("/debug-token", (req, res) => {
   if (!token) return res.json({ error: "no token" });
 
   const JWT_SECRET = process.env.JWT_SECRET;
-  const MAIN_SITE_JWT_SECRET = process.env.MAIN_SITE_JWT_SECRET || "your-secret-key-change-in-production";
+  const MAIN_SITE_JWT_SECRET =
+    process.env.MAIN_SITE_JWT_SECRET || "your-secret-key-change-in-production";
 
-  let decoded1 = null, err1 = null;
-  let decoded2 = null, err2 = null;
+  let decoded1 = null,
+    err1 = null;
+  let decoded2 = null,
+    err2 = null;
 
-  try { decoded1 = jwt.verify(token, JWT_SECRET); } catch(e) { err1 = e.message; }
-  try { decoded2 = jwt.verify(token, MAIN_SITE_JWT_SECRET); } catch(e) { err2 = e.message; }
+  try {
+    decoded1 = jwt.verify(token, JWT_SECRET);
+  } catch (e) {
+    err1 = e.message;
+  }
+  try {
+    decoded2 = jwt.verify(token, MAIN_SITE_JWT_SECRET);
+  } catch (e) {
+    err2 = e.message;
+  }
 
   const raw = jwt.decode(token);
 
