@@ -18,20 +18,32 @@ function canAccessOwner(callerId, callerRole, owner) {
 export async function getWeekly(req, res, next) {
   try {
     const { userId: targetUserId, mentorId, weekStart } = req.query;
-    const owner = resolveOwner(req.userId, req.userRole, { targetUserId, targetMentorId: mentorId });
+    const owner = resolveOwner(req.userId, req.userRole, {
+      targetUserId,
+      targetMentorId: mentorId,
+    });
     if (!owner) {
-      return res.status(400).json({ error: "Pass either userId or mentorId, not both" });
+      if (res.headersSent || req.destroyed || res.writableEnded) return;
+      return res
+        .status(400)
+        .json({ error: "Pass either userId or mentorId, not both" });
     }
     if (!canAccessOwner(req.userId, req.userRole, owner)) {
-      return res.status(403).json({ error: "Cannot view another user's availability" });
+      if (res.headersSent || req.destroyed || res.writableEnded) return;
+      return res
+        .status(403)
+        .json({ error: "Cannot view another user's availability" });
     }
 
     const result = await loadWeeklyAvailability(owner, weekStart);
+    console.log("Weekly availability result:", result);
+    if (res.headersSent || req.destroyed || res.writableEnded) return;
     res.json(result);
   } catch (e) {
     next(e);
   }
 }
+
 
 export async function getTemplate(req, res, next) {
   try {
@@ -40,7 +52,9 @@ export async function getTemplate(req, res, next) {
       targetMentorId: req.query.mentorId,
     });
     if (!owner) {
-      return res.status(400).json({ error: "Pass either userId or mentorId, not both" });
+      return res
+        .status(400)
+        .json({ error: "Pass either userId or mentorId, not both" });
     }
     if (!canAccessOwner(req.userId, req.userRole, owner)) {
       return res.status(403).json({ error: "Forbidden" });
@@ -63,7 +77,9 @@ export async function saveBatch(req, res, next) {
       return res.status(400).json({ error: "weekStart required" });
     }
     if (scope !== "week" && scope !== "template") {
-      return res.status(400).json({ error: "scope must be 'week' or 'template'" });
+      return res
+        .status(400)
+        .json({ error: "scope must be 'week' or 'template'" });
     }
 
     let owner = resolveOwner(callerId, role, {
@@ -71,25 +87,36 @@ export async function saveBatch(req, res, next) {
       targetMentorId: req.body.mentorId,
     });
     if (!owner) {
-      return res.status(400).json({ error: "Pass either userId or mentorId, not both" });
+      return res
+        .status(400)
+        .json({ error: "Pass either userId or mentorId, not both" });
     }
     if (!canAccessOwner(callerId, role, owner)) {
-      return res.status(403).json({ error: "Cannot modify another user's availability" });
+      return res
+        .status(403)
+        .json({ error: "Cannot modify another user's availability" });
     }
 
     if (scope === "template") {
       const enabledPattern = Array.isArray(pattern)
         ? pattern
-        : (Array.isArray(slots) ? slots.filter((s) => s.enabled) : []);
+        : Array.isArray(slots)
+          ? slots.filter((s) => s.enabled)
+          : [];
 
       if (enabledPattern.length === 0 && !Array.isArray(pattern)) {
-        return res.status(400).json({ error: "pattern array required for template scope" });
+        return res
+          .status(400)
+          .json({ error: "pattern array required for template scope" });
       }
 
-      validateChangesNotPast(weekStart, enabledPattern.map((s) => ({
-        dayOfWeek: s.dayOfWeek,
-        hour: s.hour,
-      })));
+      validateChangesNotPast(
+        weekStart,
+        enabledPattern.map((s) => ({
+          dayOfWeek: s.dayOfWeek,
+          hour: s.hour,
+        })),
+      );
 
       await saveTemplateFromGrid(owner, enabledPattern, weekStart);
       const result = await loadWeeklyAvailability(owner, weekStart);
@@ -97,7 +124,9 @@ export async function saveBatch(req, res, next) {
     }
 
     if (!Array.isArray(slots) || slots.length === 0) {
-      return res.status(400).json({ error: "slots array required for week scope" });
+      return res
+        .status(400)
+        .json({ error: "slots array required for week scope" });
     }
 
     validateChangesNotPast(weekStart, slots);

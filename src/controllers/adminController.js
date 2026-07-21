@@ -78,6 +78,7 @@ export async function getAvailabilityForUser(req, res, next) {
 
     const user = await prisma.user.findUnique({ where: { id: userId }, select: { role: true } });
     if (!user) {
+      if (res.headersSent || req.destroyed || res.writableEnded) return;
       return res.status(404).json({ error: "User not found" });
     }
 
@@ -90,11 +91,13 @@ export async function getAvailabilityForUser(req, res, next) {
     weekStartDate.setUTCHours(0, 0, 0, 0);
 
     const result = await loadWeeklyAvailability(owner, weekStartDate);
+    if (res.headersSent || req.destroyed || res.writableEnded) return;
     res.json(result);
   } catch (e) {
     next(e);
   }
 }
+
 
 function rangesOverlap(aStart, aEnd, bStart, bEnd) {
   return aStart < bEnd && bStart < aEnd;

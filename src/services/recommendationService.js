@@ -92,7 +92,7 @@ No explanations outside of the JSON. Do not wrap the JSON output in markdown blo
   while (attempts > 0) {
     try {
       const response = await ai.models.generateContent({
-        model: "gemini-3.5-flash",
+        model: "gemini-3.1-flash-lite",
         contents: prompt,
         config: {
           responseMimeType: "application/json",
@@ -105,9 +105,20 @@ No explanations outside of the JSON. Do not wrap the JSON output in markdown blo
         throw new Error("Empty response from Gemini");
       }
 
-      const parsed = JSON.parse(text);
+      let cleanedText = text.trim();
+      if (cleanedText.startsWith("```")) {
+        cleanedText = cleanedText.replace(/^```(?:json)?/i, "").replace(/```$/, "").trim();
+      }
+      
+      const start = cleanedText.indexOf("{");
+      const end = cleanedText.lastIndexOf("}");
+      if (start !== -1 && end !== -1 && end > start) {
+        cleanedText = cleanedText.slice(start, end + 1);
+      }
 
-      if (!Array.isArray(parsed.recommendations)) {
+      const parsed = JSON.parse(cleanedText);
+
+      if (!parsed.recommendations || !Array.isArray(parsed.recommendations)) {
         throw new Error("Invalid response schema");
       }
 
@@ -133,8 +144,9 @@ No explanations outside of the JSON. Do not wrap the JSON output in markdown blo
 
       return recommendationsWithMentorDetails;
     } catch (err) {
-      console.error(err);
-      throw err;
+      console.error("Gemini attempt failed:", err);
+      lastError = err;
+      attempts--;
     }
   }
 

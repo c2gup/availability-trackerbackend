@@ -6,9 +6,7 @@ const prisma = new PrismaClient();
 async function main() {
   const password = await bcrypt.hash("Test@12345", 10);
 
-  // ==========================
-  // Admin
-  // ==========================
+
   await prisma.user.upsert({
     where: { email: "admin@mentorque.com" },
     update: {

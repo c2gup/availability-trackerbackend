@@ -1,5 +1,9 @@
 import { Router } from "express";
-import { getWeekly, saveBatch, getTemplate } from "../controllers/availabilityController.js";
+import {
+  getWeekly,
+  saveBatch,
+  getTemplate,
+} from "../controllers/availabilityController.js";
 import { authenticate } from "../middleware/auth.js";
 
 export const availabilityRoutes = Router();

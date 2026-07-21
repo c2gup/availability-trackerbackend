@@ -57,6 +57,13 @@ function weekStartDate(weekStartInput) {
   return parseDateUTC(String(weekStartInput).slice(0, 10));
 }
 
+function normalizeToMonday(dateInput) {
+  const date = dateInput instanceof Date
+    ? dateInput
+    : parseDateUTC(String(dateInput).slice(0, 10));
+  return getWeekStart(date);
+}
+
 function weekDateStrings(weekStart) {
   const start = weekStart instanceof Date ? weekStart : parseDateUTC(weekStart);
   return getWeekDates(start).map((d) => d.toISOString().slice(0, 10));
@@ -139,7 +146,7 @@ export async function replaceTemplate(owner, patternSlots) {
 }
 
 async function getExceptionsForWeek(owner, weekStart) {
-  const ws = weekStartDate(weekStart);
+  const ws = normalizeToMonday(weekStart);
   const where =
     owner.role === "MENTOR"
       ? { mentorId: owner.mentorId, weekStart: ws }
@@ -151,36 +158,73 @@ async function getExceptionsForWeek(owner, weekStart) {
   });
 }
 
+async function getExceptionsForWeekRange(owner, dateStrs) {
+  if (dateStrs.length === 0) return [];
+  const mondays = [...new Set(dateStrs.map(dStr => getWeekStart(parseDateUTC(dStr)).toISOString()))]
+    .map(iso => new Date(iso));
+
+  const where =
+    owner.role === "MENTOR"
+      ? {
+          mentorId: owner.mentorId,
+          OR: mondays.map(m => ({ weekStart: m })),
+        }
+      : {
+          userId: owner.userId,
+          OR: mondays.map(m => ({ weekStart: m })),
+        };
+
+  return prisma.availabilityException.findMany({
+    where,
+    orderBy: [{ weekStart: "asc" }, { dayOfWeek: "asc" }, { hour: "asc" }],
+  });
+}
+
 function exceptionsMap(rows) {
   const map = new Map();
   for (const row of rows) {
-    map.set(slotKey(row.dayOfWeek, row.hour), row.enabled);
+    const exceptionDate = new Date(row.weekStart);
+    exceptionDate.setUTCDate(exceptionDate.getUTCDate() + row.dayOfWeek);
+    const dateStr = exceptionDate.toISOString().slice(0, 10);
+    map.set(`${dateStr}-${row.hour}`, row.enabled);
+    map.set(`${row.dayOfWeek}-${row.hour}`, row.enabled);
   }
   return map;
 }
 
-export function effectiveSlotEnabled(template, excMap, dayOfWeek, hour) {
-  const key = slotKey(dayOfWeek, hour);
-  if (excMap.has(key)) return excMap.get(key);
-  return templateHas(template, dayOfWeek, hour);
+export function effectiveSlotEnabled(template, excMap, dayOfWeek, hour, dateStr = null) {
+  const keysToCheck = [];
+  if (dateStr) {
+    keysToCheck.push(`${dateStr}-${hour}`);
+  }
+  keysToCheck.push(`${dayOfWeek}-${hour}`);
+
+  for (const key of keysToCheck) {
+    if (excMap.has(key)) return excMap.get(key);
+  }
+
+  const templateKey = slotKey(dayOfWeek, hour);
+  return templateSet(template).has(templateKey);
 }
 
 function buildAvailabilityByDate(dateStrs, weekStart, template, excMap) {
   const byDate = {};
   dateStrs.forEach((d) => (byDate[d] = []));
 
-  for (let dow = 0; dow < 7; dow++) {
-    const dateStr = dateStrs[dow];
-    if (!dateStr) continue;
+  dateStrs.forEach((dateStr) => {
+    const d = new Date(dateStr + "T00:00:00.000Z");
+    const day = d.getUTCDay();
+    const dowIndex = day === 0 ? 6 : day - 1;
+
     for (let hour = 0; hour < 24; hour++) {
-      if (!effectiveSlotEnabled(template, excMap, dow, hour)) continue;
+      if (!effectiveSlotEnabled(template, excMap, dowIndex, hour, dateStr)) continue;
       const { start, end } = slotUtcTimes(dateStr, hour);
       byDate[dateStr].push({
         startTime: start.toISOString(),
         endTime: end.toISOString(),
       });
     }
-  }
+  });
 
   return byDate;
 }
@@ -218,13 +262,13 @@ async function getMeetingsForWeek(owner, weekStart) {
   });
 }
 
-
 export async function loadWeeklyAvailability(owner, weekStartInput) {
   const start = weekStartInput
     ? weekStartDate(weekStartInput)
     : getWeekStart(new Date());
 
   const dateStrs = weekDateStrings(start);
+  const weekEnd = new Date(start.getTime() + 7 * 24 * 60 * 60 * 1000);
 
   let template = await getTemplateSlots(owner);
 
@@ -232,25 +276,36 @@ export async function loadWeeklyAvailability(owner, weekStartInput) {
     template = await ensureTemplateFromLegacyAvailabilities(owner);
   }
 
-  const exceptions = await getExceptionsForWeek(owner, start);
+  const exceptions = await getExceptionsForWeekRange(owner, dateStrs);
   const excMap = exceptionsMap(exceptions);
 
-  // NEW
   const meetings = await getMeetingsForWeek(owner, start);
+
+  const availability = buildAvailabilityByDate(
+    dateStrs,
+    start,
+    template,
+    excMap,
+  );
+
+  console.log("--- DEBUG Weekly Availability ---");
+  console.log("received weekStart:", weekStartInput);
+  console.log("normalized weekStart:", start.toISOString().slice(0, 10));
+  console.log("computed weekEnd:", weekEnd.toISOString().slice(0, 10));
+  console.log("timezone: UTC");
+  console.log("template records (count):", template.length);
+  console.log("template records:", JSON.stringify(template));
+  console.log("exception records (count):", exceptions.length);
+  console.log("exception records:", JSON.stringify(exceptions));
+  console.log("final merged availability:", JSON.stringify(availability));
+  console.log("---------------------------------");
 
   return {
     weekStart: dateStrs[0],
     dates: dateStrs,
 
-    availability: buildAvailabilityByDate(
-      dateStrs,
-      start,
-      template,
-      excMap,
-      meetings, // <-- pass meetings
-    ),
-
-    meetings, // <-- send to frontend also
+    availability,
+    meetings,
 
     hasTemplate: template.length > 0,
     exceptionCount: exceptions.length,
@@ -292,7 +347,7 @@ async function ensureTemplateFromLegacyAvailabilities(owner) {
 }
 
 async function upsertException(owner, weekStart, dayOfWeek, hour, enabled) {
-  const ws = weekStartDate(weekStart);
+  const ws = normalizeToMonday(weekStart);
   const data = {
     role: owner.role,
     weekStart: ws,
@@ -331,7 +386,7 @@ async function upsertException(owner, weekStart, dayOfWeek, hour, enabled) {
 }
 
 async function deleteException(owner, weekStart, dayOfWeek, hour) {
-  const ws = weekStartDate(weekStart);
+  const ws = normalizeToMonday(weekStart);
   const where =
     owner.role === "MENTOR"
       ? { mentorId: owner.mentorId, weekStart: ws, dayOfWeek, hour }
@@ -388,7 +443,7 @@ export async function saveTemplateFromGrid(
 }
 
 async function clearWeekExceptions(owner, weekStart) {
-  const ws = weekStartDate(weekStart);
+  const ws = normalizeToMonday(weekStart);
   const where =
     owner.role === "MENTOR"
       ? { mentorId: owner.mentorId, weekStart: ws }
@@ -420,7 +475,7 @@ export async function isAvailableBetween(owner, startTime, endTime) {
 
     const exceptions = await getExceptionsForWeek(owner, ws);
     const excMap = exceptionsMap(exceptions);
-    if (!effectiveSlotEnabled(template, excMap, dow, hour)) return false;
+    if (!effectiveSlotEnabled(template, excMap, dow, hour, dateStr)) return false;
 
     cursor.setUTCHours(cursor.getUTCHours() + 1);
   }
