@@ -6,6 +6,7 @@ import { loadWeeklyAvailability, isAvailableBetween } from "../services/availabi
 import { v4 as uuidv4 } from "uuid";
 import { isPastTime } from "../utils/time.js";
 import { createCalendarEventWithMeet } from "../services/googleCalendar.js";
+import { getAiRecommendations } from "../services/recommendationService.js";
 
 export async function listUsers(req, res, next) {
   try {
@@ -402,5 +403,20 @@ export async function getRecommendations(req, res, next) {
     res.json(recommendations);
   } catch (e) {
     next(e);
+  }
+}
+
+export async function recommendMentors(req, res, next) {
+  try {
+    const { userId } = req.body;
+    if (!userId) {
+      return res.status(400).json({ error: "userId body parameter is required" });
+    }
+
+    const recommendations = await getAiRecommendations(userId);
+    res.json({ recommendations });
+  } catch (e) {
+    const status = e.message.includes("not found") ? 404 : 500;
+    res.status(status).json({ error: e.message || "Failed to generate recommendations" });
   }
 }
