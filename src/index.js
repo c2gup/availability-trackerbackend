@@ -9,6 +9,8 @@ import { meetingRoutes } from "./routes/meeting.js";
 import { adminRoutes } from "./routes/admin.js";
 import { googleRouter } from "./routes/google.routes.js";
 import { integrationRoutes } from "./routes/integration.js";
+import { userRoutes } from "./routes/users.js";
+import { mentorRoutes } from "./routes/mentors.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 
 const app = express();
@@ -40,6 +42,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/availability", availabilityRoutes);
 app.use("/api/meetings", meetingRoutes);
 app.use("/api/admin", adminRoutes);
+app.use("/api/users", userRoutes);
+app.use("/api/mentors", mentorRoutes);
 app.use("/api/integration", integrationRoutes);
 app.use("/api/google", googleRouter);
 

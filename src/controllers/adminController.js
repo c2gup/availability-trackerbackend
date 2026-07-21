@@ -11,7 +11,7 @@ export async function listUsers(req, res, next) {
   try {
     const users = await prisma.user.findMany({
       where: { role: "USER" },
-      select: { id: true, name: true, email: true, timezone: true, createdAt: true },
+      select: { id: true, name: true, email: true, timezone: true, createdAt: true, description: true, tags: true },
       orderBy: { name: "asc" },
     });
     res.json(users);
@@ -24,7 +24,7 @@ export async function listMentors(req, res, next) {
   try {
     const mentors = await prisma.user.findMany({
       where: { role: "MENTOR" },
-      select: { id: true, name: true, email: true, timezone: true, createdAt: true },
+      select: { id: true, name: true, email: true, timezone: true, createdAt: true, description: true, tags: true },
       orderBy: { name: "asc" },
     });
     res.json(mentors);
@@ -223,6 +223,183 @@ export async function scheduleMeeting(req, res, next) {
     });
 
     res.status(201).json({ ...withParticipants, meetLink: withParticipants.meetLink ?? meetLink });
+  } catch (e) {
+    next(e);
+  }
+}
+
+const stopWords = new Set([
+  'i', 'me', 'my', 'myself', 'we', 'our', 'ours', 'ourselves', 'you', 'your', 'yours', 'yourself', 'yourselves', 
+  'he', 'him', 'his', 'himself', 'she', 'her', 'hers', 'herself', 'it', 'its', 'itself', 'they', 'them', 'their', 
+  'theirs', 'themselves', 'what', 'which', 'who', 'whom', 'this', 'that', 'these', 'those', 'am', 'is', 'are', 
+  'was', 'were', 'be', 'been', 'being', 'have', 'has', 'had', 'having', 'do', 'does', 'did', 'doing', 'a', 'an', 
+  'the', 'and', 'but', 'if', 'or', 'because', 'as', 'until', 'while', 'of', 'at', 'by', 'for', 'with', 'about', 
+  'against', 'between', 'into', 'through', 'during', 'before', 'after', 'above', 'below', 'to', 'from', 'up', 
+  'down', 'in', 'out', 'on', 'off', 'over', 'under', 'again', 'further', 'then', 'once', 'here', 'there', 'when', 
+  'where', 'why', 'how', 'all', 'any', 'both', 'each', 'few', 'more', 'most', 'other', 'some', 'such', 'no', 
+  'nor', 'not', 'only', 'own', 'same', 'so', 'than', 'too', 'very', 's', 't', 'can', 'will', 'just', 'don', 
+  'should', 'now', 'looking', 'for', 'want', 'to', 'learn', 'get', 'help', 'with', 'need'
+]);
+
+function extractKeywords(text) {
+  if (!text || typeof text !== "string") return [];
+  const words = text
+    .toLowerCase()
+    .replace(/[^\w\s]/g, ' ')
+    .split(/\s+/)
+    .filter(w => w.length > 1);
+  const uniqueKeywords = new Set(words.filter(w => !stopWords.has(w)));
+  return Array.from(uniqueKeywords);
+}
+
+export async function updateAdminUser(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { description, tags } = req.body;
+    
+    const user = await prisma.user.findUnique({
+      where: { id },
+    });
+    if (!user || user.role !== "USER") {
+      return res.status(404).json({ error: "User not found or is not a USER" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        description: description !== undefined ? description : undefined,
+        tags: Array.isArray(tags) ? tags : undefined,
+      },
+      select: { id: true, name: true, email: true, role: true, description: true, tags: true },
+    });
+    res.json(updated);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function updateAdminMentor(req, res, next) {
+  try {
+    const { id } = req.params;
+    const { description, tags } = req.body;
+
+    const user = await prisma.user.findUnique({
+      where: { id },
+    });
+    if (!user || user.role !== "MENTOR") {
+      return res.status(404).json({ error: "Mentor not found or is not a MENTOR" });
+    }
+
+    const updated = await prisma.user.update({
+      where: { id },
+      data: {
+        description: description !== undefined ? description : undefined,
+        tags: Array.isArray(tags) ? tags : undefined,
+      },
+      select: { id: true, name: true, email: true, role: true, description: true, tags: true },
+    });
+    res.json(updated);
+  } catch (e) {
+    next(e);
+  }
+}
+
+export async function getRecommendations(req, res, next) {
+  try {
+    const { userId } = req.query;
+    if (!userId) {
+      return res.status(400).json({ error: "userId query parameter is required" });
+    }
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        tags: true,
+        description: true
+      }
+    });
+
+    if (!user) {
+      return res.status(404).json({ error: "User not found" });
+    }
+
+    const mentors = await prisma.user.findMany({
+      where: { role: "MENTOR" },
+      select: {
+        id: true,
+        name: true,
+        email: true,
+        role: true,
+        timezone: true,
+        tags: true,
+        description: true
+      }
+    });
+
+    const userTags = user.tags || [];
+    const userDesc = user.description || "";
+    const userKeywords = extractKeywords(userDesc);
+
+    const recommendations = mentors.map((mentor) => {
+      const mentorTags = mentor.tags || [];
+      const mentorDesc = mentor.description || "";
+      const mentorKeywords = extractKeywords(mentorDesc);
+
+      // 1. Tag Similarity (60% weight)
+      let tagSimilarity = 0;
+      let matchedTags = [];
+      if (userTags.length > 0) {
+        matchedTags = mentorTags.filter((t) => userTags.includes(t));
+        tagSimilarity = matchedTags.length / userTags.length;
+      }
+
+      // 2. Keyword Similarity (40% weight)
+      let keywordSimilarity = 0;
+      let matchedKeywords = [];
+      if (userKeywords.length > 0) {
+        matchedKeywords = mentorKeywords.filter((kw) => userKeywords.includes(kw));
+        keywordSimilarity = matchedKeywords.length / userKeywords.length;
+      }
+
+      // Combined Score (out of 100)
+      const score = Math.round((0.6 * tagSimilarity + 0.4 * keywordSimilarity) * 100);
+
+      // Explanation string
+      const explanationParts = [];
+      if (userTags.length > 0) {
+        explanationParts.push(`Matched ${matchedTags.length} of ${userTags.length} tags: [${matchedTags.join(", ")}] (${Math.round(tagSimilarity * 100)}% tag similarity).`);
+      } else {
+        explanationParts.push("User has no tags to match.");
+      }
+
+      if (userKeywords.length > 0) {
+        if (matchedKeywords.length > 0) {
+          explanationParts.push(`Shared description keywords: [${matchedKeywords.join(", ")}] (${Math.round(keywordSimilarity * 100)}% keyword similarity).`);
+        } else {
+          explanationParts.push(`No matching description keywords (0% keyword similarity).`);
+        }
+      } else {
+        explanationParts.push("User has no description keywords to match.");
+      }
+
+      const explanation = `${score}% compatibility match. ${explanationParts.join(" ")}`;
+
+      return {
+        mentor,
+        score,
+        matchedTags,
+        explanation
+      };
+    });
+
+    // Sort descending
+    recommendations.sort((a, b) => b.score - a.score);
+
+    res.json(recommendations);
   } catch (e) {
     next(e);
   }
