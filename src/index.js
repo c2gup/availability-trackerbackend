@@ -20,7 +20,8 @@ const allowedOrigins = [
   "https://availabilitytrackerfrontend.vercel.app",
   "http://localhost:3000",
   "http://localhost:5174",
-  "https://availability-trackerfrontend-iota.vercel.app/",
+  "https://availability-trackerfrontend-iota.vercel.app",
+  "*",
 ];
 
 app.use(
